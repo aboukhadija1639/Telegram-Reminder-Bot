@@ -111,13 +111,13 @@ function createRecurrenceKeyboard(lang = 'ar', selectedPattern = null) {
  * @param {string} noAction - Callback data for no button
  * @returns {object} Inline keyboard markup
  */
-function createConfirmationKeyboard(lang = 'ar', yesAction = 'confirm_yes', noAction = 'confirm_no') {
+function createConfirmationKeyboard(lang = 'ar', yesAction = 'confirm_confirm', noAction = 'confirm_cancel') {
   const t = (key, options) => translate(lang, key, options);
   
   return Markup.inlineKeyboard([
     [
-      Markup.button.callback(t('reminder.yes'), yesAction),
-      Markup.button.callback(t('reminder.no'), noAction)
+      Markup.button.callback(`✅ ${t('common.confirm')}`, yesAction),
+      Markup.button.callback(`❌ ${t('common.cancel')}`, noAction)
     ]
   ]);
 }

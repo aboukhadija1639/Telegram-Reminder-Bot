@@ -27,6 +27,7 @@ async function callbackHandler(ctx) {
         break;
       
       case 'page':
+      case 'list':
         await handlePageCallback(ctx, params[0]);
         break;
       
@@ -50,6 +51,10 @@ async function callbackHandler(ctx) {
         await handleConfirmCallback(ctx, params[0]);
         break;
       
+      case 'skip':
+        await handleSkipCallback(ctx, params[0]);
+        break;
+      
       case 'complete':
         await handleCompleteCallback(ctx, params[0]);
         break;
@@ -59,7 +64,30 @@ async function callbackHandler(ctx) {
         break;
       
       case 'delete':
-        await handleDeleteCallback(ctx, params[0]);
+        if (params.length > 1 && params[0] === 'select') {
+          // Delete command selection
+          const deleteModule = require('../commands/delete');
+          await deleteModule.handleReminderSelection(ctx, params[1]);
+        } else if (params.length > 1 && params[0] === 'confirm') {
+          // Delete confirmation
+          const deleteModule = require('../commands/delete');
+          await deleteModule.handleDeleteConfirmation(ctx, 'confirm', params[1]);
+        } else if (params[0] === 'cancel') {
+          // Delete cancellation
+          const deleteModule = require('../commands/delete');
+          await deleteModule.handleDeleteConfirmation(ctx, 'cancel', null);
+        } else {
+          // Original delete callback for reminder notifications
+          await handleDeleteCallback(ctx, params[0]);
+        }
+        break;
+      
+      case 'edit':
+        await handleEditCallback(ctx, params);
+        break;
+      
+      case 'broadcast':
+        await handleBroadcastCallback(ctx, params[0]);
         break;
       
       default:
@@ -244,13 +272,8 @@ async function handleSettingsCallback(ctx, setting) {
 
 async function handlePriorityCallback(ctx, priority) {
   try {
-    // Store priority in session for reminder creation
-    ctx.session.reminderData = ctx.session.reminderData || {};
-    ctx.session.reminderData.priority = priority;
-    
-    await safeAnswerCallbackQuery(ctx, ctx.t('common.success'));
-    
-    // TODO: Continue with reminder creation flow
+    const { handlePriorityCallback: remindHandlePriority } = require('../commands/remind');
+    await remindHandlePriority(ctx, priority);
     
   } catch (error) {
     logger.error('Error handling priority callback', error, {
@@ -263,13 +286,8 @@ async function handlePriorityCallback(ctx, priority) {
 
 async function handleRecurrenceCallback(ctx, pattern) {
   try {
-    // Store recurrence in session for reminder creation
-    ctx.session.reminderData = ctx.session.reminderData || {};
-    ctx.session.reminderData.recurrence = pattern;
-    
-    await safeAnswerCallbackQuery(ctx, ctx.t('common.success'));
-    
-    // TODO: Continue with reminder creation flow
+    const { handleRecurrenceCallback: remindHandleRecurrence } = require('../commands/remind');
+    await remindHandleRecurrence(ctx, pattern);
     
   } catch (error) {
     logger.error('Error handling recurrence callback', error, {
@@ -282,13 +300,8 @@ async function handleRecurrenceCallback(ctx, pattern) {
 
 async function handleConfirmCallback(ctx, action) {
   try {
-    if (action === 'yes') {
-      await safeAnswerCallbackQuery(ctx, ctx.t('common.success'));
-      // TODO: Execute confirmed action
-    } else {
-      await safeAnswerCallbackQuery(ctx, ctx.t('common.cancel'));
-      // TODO: Cancel action
-    }
+    const { handleConfirmationCallback } = require('../commands/remind');
+    await handleConfirmationCallback(ctx, action);
     
   } catch (error) {
     logger.error('Error handling confirm callback', error, {
@@ -384,6 +397,73 @@ async function handleDeleteCallback(ctx, reminderId) {
     logger.error('Error handling delete callback', error, {
       userId: ctx.user?._id,
       reminderId: reminderId
+    });
+    await safeAnswerCallbackQuery(ctx, ctx.t('errors.general'));
+  }
+}
+
+async function handleSkipCallback(ctx, action) {
+  try {
+    if (action === 'message') {
+      const { handleSkipMessage } = require('../commands/remind');
+      await handleSkipMessage(ctx);
+    } else {
+      await safeAnswerCallbackQuery(ctx, ctx.t('errors.not_found'));
+    }
+    
+  } catch (error) {
+    logger.error('Error handling skip callback', error, {
+      userId: ctx.user?._id,
+      action: action
+    });
+    await safeAnswerCallbackQuery(ctx, ctx.t('errors.general'));
+  }
+}
+
+async function handleEditCallback(ctx, params) {
+  try {
+    const editModule = require('../commands/edit');
+    const action = params[0];
+    
+    switch (action) {
+      case 'select':
+        await editModule.handleReminderSelection(ctx, params[1]);
+        break;
+      case 'field':
+        await editModule.handleFieldSelection(ctx, params[1]);
+        break;
+      case 'confirm':
+      case 'cancel':
+        await editModule.handleEditConfirmation(ctx, action);
+        break;
+      case 'priority':
+        await editModule.handleEditPriorityCallback(ctx, params[1]);
+        break;
+      case 'recurrence':
+        await editModule.handleEditRecurrenceCallback(ctx, params[1]);
+        break;
+      default:
+        await safeAnswerCallbackQuery(ctx, ctx.t('errors.not_found'));
+    }
+    
+  } catch (error) {
+    logger.error('Error handling edit callback', error, {
+      userId: ctx.user?._id,
+      params: params
+    });
+    await safeAnswerCallbackQuery(ctx, ctx.t('errors.general'));
+  }
+}
+
+async function handleBroadcastCallback(ctx, action) {
+  try {
+    const { handleBroadcastConfirmation } = require('../commands/broadcast');
+    await handleBroadcastConfirmation(ctx, action);
+    
+  } catch (error) {
+    logger.error('Error handling broadcast callback', error, {
+      userId: ctx.user?._id,
+      action: action
     });
     await safeAnswerCallbackQuery(ctx, ctx.t('errors.general'));
   }

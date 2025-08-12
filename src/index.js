@@ -20,6 +20,8 @@ const startHandler = require('./bot/handlers/commands/start');
 const helpHandler = require('./bot/handlers/commands/help');
 const remindHandler = require('./bot/handlers/commands/remind');
 const listHandler = require('./bot/handlers/commands/list');
+const editHandler = require('./bot/handlers/commands/edit');
+const deleteHandler = require('./bot/handlers/commands/delete');
 const settingsHandler = require('./bot/handlers/commands/settings');
 const languageHandler = require('./bot/handlers/commands/language');
 const timezoneHandler = require('./bot/handlers/commands/timezone');
@@ -136,6 +138,8 @@ class TelegramReminderBot {
     this.bot.command('help', helpHandler);
     this.bot.command('remind', remindHandler);
     this.bot.command('list', listHandler);
+    this.bot.command('edit', editHandler);
+    this.bot.command('delete', deleteHandler);
     this.bot.command('settings', settingsHandler);
     this.bot.command('language', languageHandler);
     this.bot.command('timezone', timezoneHandler);
@@ -155,6 +159,42 @@ class TelegramReminderBot {
     
     // Handle all callback queries
     this.bot.on('callback_query', callbackHandler);
+    
+    // Handle text messages for reminder wizard and edit wizard
+    this.bot.on('text', async (ctx) => {
+      try {
+        // Try reminder wizard first
+        const { handleReminderInput } = require('./bot/handlers/commands/remind');
+        const reminderHandled = await handleReminderInput(ctx);
+        
+        if (!reminderHandled) {
+          // Try edit wizard
+          const { handleEditInput } = require('./bot/handlers/commands/edit');
+          const editHandled = await handleEditInput(ctx);
+          
+          if (!editHandled) {
+            // Try broadcast input (admin only)
+            if (ctx.user?.isAdmin) {
+              const { handleBroadcastInput } = require('./bot/handlers/commands/broadcast');
+              const broadcastHandled = await handleBroadcastInput(ctx);
+              
+              // If no handler processed the input but user is in a session, show error
+              if (!broadcastHandled && (ctx.session.reminderData || ctx.session.editData || ctx.session.broadcastData)) {
+                await ctx.reply(ctx.t('reminder.unexpected_input'));
+              }
+            } else if (ctx.session.reminderData || ctx.session.editData) {
+              // User is in a session but not admin
+              await ctx.reply(ctx.t('reminder.unexpected_input'));
+            }
+          }
+        }
+      } catch (error) {
+        logger.error('Error handling text message', error, {
+          userId: ctx.user?._id,
+          text: ctx.message?.text
+        });
+      }
+    });
     
     logger.info('✅ Callback handlers setup completed');
   }
