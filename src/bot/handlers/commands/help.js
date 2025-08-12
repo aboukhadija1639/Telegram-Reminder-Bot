@@ -88,48 +88,28 @@ function getNewUserTips(t) {
 }
 
 // Handle help callback queries for detailed help sections
-async function handleHelpCallback(ctx, section) {
+// Add content comparison before editing
+const handleHelpCallback = async (ctx) => {
   try {
-    const t = ctx.t;
-    let message = '';
+    const currentMessage = ctx.callbackQuery.message;
+    const newMessageText = generateHelpText(ctx.match[1], ctx.user);
+    const newKeyboard = generateHelpKeyboard(ctx.match[1], ctx.user.language);
     
-    switch (section) {
-      case 'remind':
-        message = getRemindHelp(t);
-        break;
-      case 'list':
-        message = getListHelp(t);
-        break;
-      case 'settings':
-        message = getSettingsHelp(t);
-        break;
-      case 'language':
-        message = getLanguageHelp(t);
-        break;
-      case 'admin':
-        message = getAdminHelp(t);
-        break;
-      case 'users':
-        message = getUsersHelp(t);
-        break;
-      default:
-        message = t('errors.not_found');
+    // Check if content is different before editing
+    const isDifferentText = currentMessage.text !== newMessageText;
+    const isDifferentKeyboard = JSON.stringify(currentMessage.reply_markup) !== JSON.stringify(newKeyboard);
+    
+    if (isDifferentText || isDifferentKeyboard) {
+      await ctx.editMessageText(newMessageText, { reply_markup: newKeyboard });
+    } else {
+      // Just answer callback query if no changes needed
+      await ctx.answerCbQuery();
     }
-    
-    await ctx.editMessageText(message, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: t('common.back'), callback_data: 'help_main' }]
-        ]
-      }
-    });
-    
   } catch (error) {
-    logger.error('Error in help callback', error);
-    await ctx.answerCbQuery(ctx.t('errors.general'));
+    logger.error('Error in help callback', { error });
+    await ctx.answerCbQuery('حدث خطأ، يرجى المحاولة مرة أخرى');
   }
-}
+};
 
 function getRemindHelp(t) {
   let help = `📝 **${t('help.remind')}**\n\n`;

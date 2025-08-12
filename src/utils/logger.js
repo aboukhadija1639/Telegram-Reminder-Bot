@@ -86,6 +86,28 @@ if (process.env.NODE_ENV !== 'production') {
   }));
 }
 
+// Helper function to safely extract error information
+function extractErrorInfo(error) {
+  if (!error) {
+    return { message: 'Unknown error', stack: null, name: 'UnknownError' };
+  }
+  
+  if (typeof error === 'string') {
+    return { message: error, stack: null, name: 'StringError' };
+  }
+  
+  return {
+    message: error.message || 'Unknown error message',
+    stack: error.stack || null,
+    name: error.name || 'Error',
+    code: error.code || null,
+    syscall: error.syscall || null,
+    hostname: error.hostname || null,
+    address: error.address || null,
+    port: error.port || null
+  };
+}
+
 // Custom logging methods
 class Logger {
   static info(message, meta = {}) {
@@ -94,11 +116,7 @@ class Logger {
   
   static error(message, error = null, meta = {}) {
     const errorMeta = error ? {
-      error: {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      },
+      error: extractErrorInfo(error),
       ...meta
     } : meta;
     
@@ -306,16 +324,7 @@ class Logger {
   
   // Method to format error for logging
   static formatError(error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      code: error.code,
-      syscall: error.syscall,
-      hostname: error.hostname,
-      address: error.address,
-      port: error.port
-    };
+    return extractErrorInfo(error);
   }
   
   // Method to create request ID for tracking
