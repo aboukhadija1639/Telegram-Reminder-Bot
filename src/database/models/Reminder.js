@@ -352,9 +352,10 @@ reminderSchema.statics.findReadyToExecute = function() {
   .sort({ priority: -1, scheduledTime: 1 });
 };
 
+// Fixed getStatsByUser method in Reminder.js
 reminderSchema.statics.getStatsByUser = function(userId) {
   return this.aggregate([
-    { $match: { userId: mongoose.Types.ObjectId(userId) } },
+    { $match: { userId: new mongoose.Types.ObjectId(userId) } }, // Fixed: use 'new' keyword
     {
       $group: {
         _id: null,

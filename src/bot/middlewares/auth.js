@@ -1,17 +1,42 @@
 const User = require('../../database/models/User');
 const logger = require('../../utils/logger');
 const { translate } = require('../../config/i18n');
+const mongoose = require('mongoose');
 
 /**
  * Authentication middleware to check if user exists and is active
  */
 async function authMiddleware(ctx, next) {
   try {
+    // Check database connection first
+    if (mongoose.connection.readyState !== 1) {
+      logger.warn('Database not connected, waiting...', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
+        telegramId: ctx.from?.id
+      });
+      
+      // Wait for connection up to 10 seconds
+      let attempts = 0;
+      while (mongoose.connection.readyState !== 1 && attempts < 20) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        attempts++;
+      }
+      
+      if (mongoose.connection.readyState !== 1) {
+        await ctx.reply('🔧 Database connection issue. Please try again in a moment.');
+        return;
+      }
+    }
+
     const startTime = Date.now();
     const telegramUser = ctx.from;
     
     if (!telegramUser) {
-      logger.security('Unauthorized access attempt - no user data');
+      logger.security('Unauthorized access attempt - no user data', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0'
+      });
       return;
     }
     
@@ -30,6 +55,8 @@ async function authMiddleware(ctx, next) {
       
       await user.save();
       logger.userAction(user._id, 'user_registered', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
         username: user.username,
         firstName: user.firstName,
         language: user.language
@@ -56,6 +83,8 @@ async function authMiddleware(ctx, next) {
       if (hasChanges) {
         await user.save();
         logger.userAction(user._id, 'user_info_updated', {
+          service: 'telegram-reminder-bot',
+          version: '1.0.0',
           changes: { username: user.username, firstName: user.firstName, lastName: user.lastName }
         });
       }
@@ -70,6 +99,8 @@ async function authMiddleware(ctx, next) {
       await ctx.reply(t('errors.banned', { reason: user.banReason || 'No reason provided' }));
       
       logger.security('Banned user access attempt', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
         userId: user._id,
         telegramId: user.telegramId,
         reason: user.banReason
@@ -80,6 +111,8 @@ async function authMiddleware(ctx, next) {
     // Check if user is active
     if (!user.isActive) {
       logger.security('Inactive user access attempt', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
         userId: user._id,
         telegramId: user.telegramId
       });
@@ -93,6 +126,8 @@ async function authMiddleware(ctx, next) {
     
     const duration = Date.now() - startTime;
     logger.performance('auth_middleware', duration, {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
       userId: user._id,
       isNewUser: !user.lastActive
     });
@@ -100,7 +135,14 @@ async function authMiddleware(ctx, next) {
     await next();
     
   } catch (error) {
-    logger.error('Auth middleware error', error, {
+    logger.error('Auth middleware error', {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
+      error: {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      },
       telegramId: ctx.from?.id,
       chatId: ctx.chat?.id
     });
@@ -109,7 +151,14 @@ async function authMiddleware(ctx, next) {
     try {
       await ctx.reply('❌ Authentication error. Please try again.');
     } catch (replyError) {
-      logger.error('Failed to send auth error message', replyError);
+      logger.error('Failed to send auth error message', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
+        error: {
+          message: replyError.message,
+          stack: replyError.stack
+        }
+      });
     }
   }
 }
@@ -122,6 +171,8 @@ async function adminMiddleware(ctx, next) {
     // Check if user exists in context (should be set by authMiddleware)
     if (!ctx.user) {
       logger.security('Admin access attempt without user context', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
         telegramId: ctx.from?.id
       });
       return;
@@ -133,6 +184,8 @@ async function adminMiddleware(ctx, next) {
       await ctx.reply(errorMessage);
       
       logger.security('Unauthorized admin access attempt', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
         userId: ctx.user._id,
         telegramId: ctx.user.telegramId,
         command: ctx.message?.text
@@ -141,13 +194,21 @@ async function adminMiddleware(ctx, next) {
     }
     
     logger.adminAction(ctx.user._id, 'admin_command_access', null, {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
       command: ctx.message?.text
     });
     
     await next();
     
   } catch (error) {
-    logger.error('Admin middleware error', error, {
+    logger.error('Admin middleware error', {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
+      error: {
+        message: error.message,
+        stack: error.stack
+      },
       userId: ctx.user?._id,
       telegramId: ctx.from?.id
     });
@@ -155,7 +216,14 @@ async function adminMiddleware(ctx, next) {
     try {
       await ctx.reply(ctx.t('errors.general'));
     } catch (replyError) {
-      logger.error('Failed to send admin error message', replyError);
+      logger.error('Failed to send admin error message', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
+        error: {
+          message: replyError.message,
+          stack: replyError.stack
+        }
+      });
     }
   }
 }
@@ -206,6 +274,8 @@ function createRateLimitMiddleware(options = {}) {
         await ctx.reply(errorMessage);
         
         logger.rateLimitHit(ctx.user?._id || ctx.from?.id, ctx.message?.text, {
+          service: 'telegram-reminder-bot',
+          version: '1.0.0',
           count: requestData.count,
           limit: maxRequests,
           windowMs
@@ -217,7 +287,13 @@ function createRateLimitMiddleware(options = {}) {
       await next();
       
     } catch (error) {
-      logger.error('Rate limit middleware error', error, {
+      logger.error('Rate limit middleware error', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
         userId: ctx.user?._id,
         telegramId: ctx.from?.id
       });
@@ -275,7 +351,14 @@ async function languageMiddleware(ctx, next) {
     await next();
     
   } catch (error) {
-    logger.error('Language middleware error', error);
+    logger.error('Language middleware error', {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     ctx.userLang = 'ar';
     ctx.t = (key, options) => translate('ar', key, options);
     await next();
@@ -290,7 +373,13 @@ function errorMiddleware() {
     try {
       await next();
     } catch (error) {
-      logger.error('Bot error', error, {
+      logger.error('Bot error', {
+        service: 'telegram-reminder-bot',
+        version: '1.0.0',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
         userId: ctx.user?._id,
         telegramId: ctx.from?.id,
         chatId: ctx.chat?.id,
@@ -303,7 +392,14 @@ function errorMiddleware() {
         const errorMessage = ctx.t ? ctx.t('errors.general') : '❌ An error occurred. Please try again later';
         await ctx.reply(errorMessage);
       } catch (replyError) {
-        logger.error('Failed to send error message to user', replyError);
+        logger.error('Failed to send error message to user', {
+          service: 'telegram-reminder-bot',
+          version: '1.0.0',
+          error: {
+            message: replyError.message,
+            stack: replyError.stack
+          }
+        });
       }
     }
   };
@@ -318,6 +414,8 @@ function loggingMiddleware() {
     
     // Log incoming update
     logger.debug('Incoming update', {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
       updateType: ctx.updateType,
       userId: ctx.from?.id,
       chatId: ctx.chat?.id,
@@ -330,6 +428,8 @@ function loggingMiddleware() {
     // Log processing time
     const duration = Date.now() - startTime;
     logger.performance('update_processing', duration, {
+      service: 'telegram-reminder-bot',
+      version: '1.0.0',
       updateType: ctx.updateType,
       userId: ctx.user?._id
     });

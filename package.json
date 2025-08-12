@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "jest",
+    "test": "NODE_ENV=test npm run dev",
     "lint": "eslint src/",
     "setup": "node scripts/setup.js",
     "backup": "node scripts/backup.js",
@@ -37,6 +37,7 @@
     "ioredis": "^5.7.0",
     "joi": "^17.11.0",
     "moment-timezone": "^0.5.48",
+    "mongodb": "^6.18.0",
     "mongoose": "^8.17.1",
     "node-cron": "^3.0.3",
     "rate-limiter-flexible": "^5.0.3",
