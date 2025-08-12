@@ -10,12 +10,29 @@ async function authMiddleware(ctx, next) {
   const startTime = Date.now();
   
   try {
+    // Validate context object
+    if (!ctx) {
+      logger.error("Auth middleware called with null context");
+      return;
+    }
+
+    if (!ctx.from) {
+      logger.error("Auth middleware called without user data", {
+        service: "telegram-reminder-bot",
+        version: "1.0.0",
+        chatId: ctx.chat?.id,
+        updateType: ctx.updateType
+      });
+      return;
+    }
+
     // Check database connection first
     if (mongoose.connection.readyState !== 1) {
       logger.warn("Database not connected, waiting...", {
         service: "telegram-reminder-bot",
         version: "1.0.0",
         telegramId: ctx.from?.id,
+        connectionState: mongoose.connection.readyState
       });
 
       // Wait for connection up to 10 seconds
@@ -26,112 +43,232 @@ async function authMiddleware(ctx, next) {
       }
 
       if (mongoose.connection.readyState !== 1) {
-        await ctx.reply(
-          "🔧 Database connection issue. Please try again in a moment."
-        );
+        logger.error("Database connection failed after waiting", {
+          service: "telegram-reminder-bot",
+          version: "1.0.0",
+          telegramId: ctx.from?.id,
+          attempts: attempts,
+          finalState: mongoose.connection.readyState
+        });
+        
+        try {
+          await ctx.reply("🔧 Database connection issue. Please try again in a moment.");
+        } catch (replyError) {
+          logger.error("Failed to send database error message", replyError, {
+            service: "telegram-reminder-bot",
+            version: "1.0.0",
+            telegramId: ctx.from?.id
+          });
+        }
         return;
       }
     }
 
     const telegramUser = ctx.from;
 
-    if (!telegramUser) {
-      logger.security("Unauthorized access attempt - no user data", {
+    // Set default context values to prevent undefined errors
+    ctx.state = ctx.state || {};
+    ctx.userLang = 'ar'; // Default language
+    ctx.t = (key, options) => translate('ar', key, options);
+
+    // Find or create user
+    let user = null;
+    try {
+      user = await User.findByTelegramId(telegramUser.id);
+    } catch (dbError) {
+      logger.error("Database error while finding user", dbError, {
         service: "telegram-reminder-bot",
         version: "1.0.0",
+        telegramId: telegramUser.id,
+        operation: "findByTelegramId"
       });
+      
+      // Continue with graceful degradation
+      try {
+        await ctx.reply("❌ Authentication error. Please try again later.");
+      } catch (replyError) {
+        logger.error("Failed to send auth error message", replyError, {
+          service: "telegram-reminder-bot",
+          version: "1.0.0"
+        });
+      }
       return;
     }
 
-    // Find or create user
-    let user = await User.findByTelegramId(telegramUser.id);
-
     if (!user) {
-      const isAdmin = isUserAdmin(telegramUser.id);
+      try {
+        const isAdmin = isUserAdmin(telegramUser.id);
 
-      // Create new user
-      user = new User({
-        telegramId: telegramUser.id,
-        username: telegramUser.username,
-        firstName: telegramUser.first_name,
-        lastName: telegramUser.last_name,
-        language: telegramUser.language_code === "ar" ? "ar" : "en",
-        isAdmin: isAdmin,
-      });
+        // Create new user with validation
+        const userData = {
+          telegramId: telegramUser.id,
+          username: telegramUser.username || null,
+          firstName: telegramUser.first_name || 'Unknown',
+          lastName: telegramUser.last_name || null,
+          language: telegramUser.language_code === "ar" ? "ar" : "en",
+          isAdmin: isAdmin,
+        };
 
-      await user.save();
-      
-      if (isAdmin) {
-        logger.adminAction(user._id, "admin_user_registered", null, {
+        user = new User(userData);
+        await user.save();
+        
+        if (isAdmin) {
+          logger.adminAction(user._id, "admin_user_registered", null, {
+            service: "telegram-reminder-bot",
+            version: "1.0.0",
+            telegramId: user.telegramId,
+          });
+        }
+        
+        logger.userAction(user._id, "user_registered", {
           service: "telegram-reminder-bot",
           version: "1.0.0",
-          telegramId: user.telegramId,
+          username: user.username,
+          firstName: user.firstName,
+          language: user.language,
         });
+      } catch (createError) {
+        logger.error("Error creating new user", createError, {
+          service: "telegram-reminder-bot",
+          version: "1.0.0",
+          telegramId: telegramUser.id,
+          userData: {
+            username: telegramUser.username,
+            firstName: telegramUser.first_name,
+            language: telegramUser.language_code
+          }
+        });
+        
+        // Set default user context to prevent further errors
+        ctx.user = {
+          _id: null,
+          telegramId: telegramUser.id,
+          language: telegramUser.language_code === "ar" ? "ar" : "en",
+          isAdmin: false,
+          isBanned: false,
+          isActive: true,
+          settings: { notifications: true }
+        };
+        ctx.userLang = ctx.user.language;
+        ctx.t = (key, options) => translate(ctx.user.language, key, options);
+        
+        try {
+          await ctx.reply("⚠️ Registration issue. Some features may be limited.");
+        } catch (replyError) {
+          logger.error("Failed to send registration warning", replyError);
+        }
+        
+        await next();
+        return;
       }
-      
-      logger.userAction(user._id, "user_registered", {
+    } else {
+      try {
+        // Check if admin status changed for existing users
+        const shouldBeAdmin = isUserAdmin(user.telegramId);
+        if (user.isAdmin !== shouldBeAdmin) {
+          user.isAdmin = shouldBeAdmin;
+          await user.save();
+
+          logger.userAction(user._id, "admin_status_updated", {
+            service: "telegram-reminder-bot",
+            version: "1.0.0",
+            oldStatus: !shouldBeAdmin,
+            newStatus: shouldBeAdmin,
+          });
+        }
+        
+        // Update user info if changed
+        let hasChanges = false;
+
+        if (user.username !== telegramUser.username) {
+          user.username = telegramUser.username;
+          hasChanges = true;
+        }
+
+        if (user.firstName !== telegramUser.first_name) {
+          user.firstName = telegramUser.first_name || 'Unknown';
+          hasChanges = true;
+        }
+
+        if (user.lastName !== telegramUser.last_name) {
+          user.lastName = telegramUser.last_name;
+          hasChanges = true;
+        }
+
+        if (hasChanges) {
+          await user.save();
+          logger.userAction(user._id, "user_info_updated", {
+            service: "telegram-reminder-bot",
+            version: "1.0.0",
+            changes: {
+              username: user.username,
+              firstName: user.firstName,
+              lastName: user.lastName,
+            },
+          });
+        }
+
+        // Update last active
+        try {
+          await user.updateLastActive();
+        } catch (updateError) {
+          logger.warn("Failed to update last active", updateError, {
+            userId: user._id,
+            service: "telegram-reminder-bot"
+          });
+          // Continue anyway, this is not critical
+        }
+      } catch (updateError) {
+        logger.error("Error updating existing user", updateError, {
+          service: "telegram-reminder-bot",
+          version: "1.0.0",
+          userId: user._id,
+          telegramId: user.telegramId
+        });
+        // Continue with existing user data
+      }
+    }
+
+    // Validate user object
+    if (!user || !user._id) {
+      logger.error("Invalid user object after authentication", {
         service: "telegram-reminder-bot",
         version: "1.0.0",
-        username: user.username,
-        firstName: user.firstName,
-        language: user.language,
+        telegramId: telegramUser.id,
+        userExists: !!user,
+        userId: user?._id
       });
-    } else {
-      // Check if admin status changed for existing users
-      const shouldBeAdmin = isUserAdmin(user.telegramId);
-      if (user.isAdmin !== shouldBeAdmin) {
-        user.isAdmin = shouldBeAdmin;
-        await user.save();
-
-        logger.userAction(user._id, "admin_status_updated", {
-          service: "telegram-reminder-bot",
-          version: "1.0.0",
-          oldStatus: !shouldBeAdmin,
-          newStatus: shouldBeAdmin,
-        });
-      }
       
-      // Update user info if changed
-      let hasChanges = false;
-
-      if (user.username !== telegramUser.username) {
-        user.username = telegramUser.username;
-        hasChanges = true;
-      }
-
-      if (user.firstName !== telegramUser.first_name) {
-        user.firstName = telegramUser.first_name;
-        hasChanges = true;
-      }
-
-      if (user.lastName !== telegramUser.last_name) {
-        user.lastName = telegramUser.last_name;
-        hasChanges = true;
-      }
-
-      if (hasChanges) {
-        await user.save();
-        logger.userAction(user._id, "user_info_updated", {
-          service: "telegram-reminder-bot",
-          version: "1.0.0",
-          changes: {
-            username: user.username,
-            firstName: user.firstName,
-            lastName: user.lastName,
-          },
-        });
-      }
-
-      // Update last active
-      await user.updateLastActive();
+      // Set fallback user context
+      ctx.user = {
+        _id: null,
+        telegramId: telegramUser.id,
+        language: telegramUser.language_code === "ar" ? "ar" : "en",
+        isAdmin: false,
+        isBanned: false,
+        isActive: true,
+        settings: { notifications: true }
+      };
+      ctx.userLang = ctx.user.language;
+      ctx.t = (key, options) => translate(ctx.user.language, key, options);
+      
+      await next();
+      return;
     }
 
     // Check if user is banned
     if (user.isBanned) {
       const t = (key, options) => translate(user.language, key, options);
-      await ctx.reply(
-        t("errors.banned", { reason: user.banReason || "No reason provided" })
-      );
+      const banMessage = t("errors.banned", { reason: user.banReason || "No reason provided" });
+      
+      try {
+        await ctx.reply(banMessage);
+      } catch (replyError) {
+        logger.error("Failed to send ban message", replyError, {
+          userId: user._id,
+          service: "telegram-reminder-bot"
+        });
+      }
 
       logger.security("Banned user access attempt", {
         service: "telegram-reminder-bot",
@@ -154,10 +291,10 @@ async function authMiddleware(ctx, next) {
       return;
     }
 
-    // Attach user to context
+    // Attach user to context with fallback values
     ctx.user = user;
-    ctx.userLang = user.language;
-    ctx.t = (key, options) => translate(user.language, key, options);
+    ctx.userLang = user.language || 'ar';
+    ctx.t = (key, options) => translate(user.language || 'ar', key, options);
 
     const duration = Date.now() - startTime;
     const isNewUser = !user.lastActive || user.createdAt > (Date.now() - 5000);
@@ -173,13 +310,43 @@ async function authMiddleware(ctx, next) {
   } catch (error) {
     const duration = Date.now() - startTime;
     
+    // Ensure error object is properly handled
+    const errorInfo = {
+      message: error?.message || 'Unknown error',
+      stack: error?.stack || null,
+      name: error?.name || 'UnknownError',
+      code: error?.code || null
+    };
+    
     logger.error("Auth middleware error", error, {
       service: "telegram-reminder-bot",
       version: "1.0.0",
       telegramId: ctx.from?.id,
       chatId: ctx.chat?.id,
       duration: `${duration}ms`,
+      errorInfo: errorInfo
     });
+
+    // Set default context to prevent downstream errors
+    if (!ctx.user) {
+      ctx.user = {
+        _id: null,
+        telegramId: ctx.from?.id || null,
+        language: 'ar',
+        isAdmin: false,
+        isBanned: false,
+        isActive: true,
+        settings: { notifications: true }
+      };
+    }
+    
+    if (!ctx.userLang) {
+      ctx.userLang = ctx.user.language || 'ar';
+    }
+    
+    if (!ctx.t) {
+      ctx.t = (key, options) => translate(ctx.userLang || 'ar', key, options);
+    }
 
     // Send generic error message
     try {
@@ -188,16 +355,26 @@ async function authMiddleware(ctx, next) {
       logger.error("Failed to send auth error message", replyError, {
         service: "telegram-reminder-bot",
         version: "1.0.0",
+        originalError: errorInfo
       });
     }
+    
+    // Continue to next middleware with default context
+    await next();
   }
 }
 
 // Helper function to check admin status
 function isUserAdmin(telegramId) {
-  const adminIds =
-    process.env.ADMIN_IDS?.split(",").map((id) => id.trim()) || [];
-  return adminIds.includes(telegramId.toString());
+  try {
+    const adminIds = process.env.ADMIN_IDS?.split(",").map((id) => id.trim()) || [];
+    return adminIds.includes(telegramId.toString());
+  } catch (error) {
+    logger.error("Error checking admin status", error, {
+      telegramId: telegramId
+    });
+    return false;
+  }
 }
 
 // Rate limiting for failed admin attempts
@@ -208,6 +385,17 @@ const adminAttempts = new Map();
  */
 async function adminMiddleware(ctx, next) {
   try {
+    // Validate context
+    if (!ctx || !ctx.from) {
+      logger.error("Admin middleware called with invalid context", {
+        service: "telegram-reminder-bot",
+        version: "1.0.0",
+        hasContext: !!ctx,
+        hasFrom: !!ctx?.from
+      });
+      return;
+    }
+
     const telegramId = ctx.from.id;
 
     // Check rate limiting for this user
@@ -227,7 +415,18 @@ async function adminMiddleware(ctx, next) {
       const waitTime = Math.ceil(
         (10 * 60 * 1000 - (now - attempts.lastAttempt)) / 1000 / 60
       );
-      await ctx.reply(ctx.t("errors.tooManyAttempts", { minutes: waitTime }));
+      
+      const errorMessage = ctx.t ? 
+        ctx.t("errors.tooManyAttempts", { minutes: waitTime }) :
+        `❌ Too many attempts. Wait ${waitTime} minutes.`;
+      
+      try {
+        await ctx.reply(errorMessage);
+      } catch (replyError) {
+        logger.error("Failed to send rate limit message", replyError, {
+          telegramId: telegramId
+        });
+      }
 
       logger.security("Admin rate limit exceeded", {
         service: "telegram-reminder-bot",
@@ -256,8 +455,15 @@ async function adminMiddleware(ctx, next) {
       attempts.lastAttempt = now;
       adminAttempts.set(telegramId, attempts);
 
-      const errorMessage = ctx.t("errors.permission");
-      await ctx.reply(errorMessage);
+      const errorMessage = ctx.t ? ctx.t("errors.permission") : "❌ Admin permission required";
+      
+      try {
+        await ctx.reply(errorMessage);
+      } catch (replyError) {
+        logger.error("Failed to send permission error", replyError, {
+          telegramId: telegramId
+        });
+      }
 
       logger.security("Unauthorized admin access attempt", {
         service: "telegram-reminder-bot",
@@ -283,19 +489,28 @@ async function adminMiddleware(ctx, next) {
 
     await next();
   } catch (error) {
+    const errorInfo = {
+      message: error?.message || 'Unknown admin middleware error',
+      stack: error?.stack || null,
+      name: error?.name || 'AdminMiddlewareError'
+    };
+
     logger.error("Admin middleware error", error, {
       service: "telegram-reminder-bot",
       version: "1.0.0",
       userId: ctx.user?._id,
       telegramId: ctx.from?.id,
+      errorInfo: errorInfo
     });
 
     try {
-      await ctx.reply(ctx.t("errors.general"));
+      const errorMessage = ctx.t ? ctx.t("errors.general") : "❌ An error occurred";
+      await ctx.reply(errorMessage);
     } catch (replyError) {
       logger.error("Failed to send admin error message", replyError, {
         service: "telegram-reminder-bot",
         version: "1.0.0",
+        originalError: errorInfo
       });
     }
   }
