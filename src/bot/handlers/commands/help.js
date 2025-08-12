@@ -87,29 +87,206 @@ function getNewUserTips(t) {
   return tips;
 }
 
-// Handle help callback queries for detailed help sections
-// Add content comparison before editing
-const handleHelpCallback = async (ctx) => {
+// Handle help callback queries for detailed help sections with comprehensive error handling
+async function handleHelpCallback(ctx, section) {
   try {
+    // Validate input parameters
+    if (!ctx) {
+      logger.error('Help callback called with null context');
+      return;
+    }
+
+    if (!ctx.callbackQuery) {
+      logger.error('Help callback called without callback query', {
+        userId: ctx.user?._id,
+        section: section
+      });
+      await ctx.answerCbQuery();
+      return;
+    }
+
+    if (!ctx.user) {
+      logger.error('Help callback called without user context', {
+        section: section,
+        telegramId: ctx.from?.id
+      });
+      await ctx.answerCbQuery();
+      return;
+    }
+
+    if (!ctx.t) {
+      logger.error('Help callback called without translation function', {
+        userId: ctx.user._id,
+        section: section
+      });
+      await ctx.answerCbQuery();
+      return;
+    }
+
     const currentMessage = ctx.callbackQuery.message;
-    const newMessageText = generateHelpText(ctx.match[1], ctx.user);
-    const newKeyboard = generateHelpKeyboard(ctx.match[1], ctx.user.language);
+    if (!currentMessage) {
+      logger.error('Help callback called without message', {
+        userId: ctx.user._id,
+        section: section
+      });
+      await ctx.answerCbQuery();
+      return;
+    }
+    
+    // Generate new content based on section
+    const newMessageText = generateHelpText(section, ctx.user, ctx.t);
+    const newKeyboard = generateHelpKeyboard(section, ctx.user.language);
+    
+    if (!newMessageText) {
+      logger.error('Failed to generate help text', {
+        userId: ctx.user._id,
+        section: section
+      });
+      await ctx.answerCbQuery(ctx.t('errors.general'));
+      return;
+    }
     
     // Check if content is different before editing
     const isDifferentText = currentMessage.text !== newMessageText;
     const isDifferentKeyboard = JSON.stringify(currentMessage.reply_markup) !== JSON.stringify(newKeyboard);
     
     if (isDifferentText || isDifferentKeyboard) {
-      await ctx.editMessageText(newMessageText, { reply_markup: newKeyboard });
-    } else {
-      // Just answer callback query if no changes needed
+      try {
+        await ctx.editMessageText(newMessageText, { 
+          reply_markup: newKeyboard,
+          parse_mode: 'Markdown'
+        });
+        logger.userAction(ctx.user._id, 'help_callback_edit', { section });
+      } catch (editError) {
+        // Handle specific Telegram API errors
+        if (editError.code === 400 && editError.description?.includes('message is not modified')) {
+          logger.debug('Message content identical, no edit needed', {
+            userId: ctx.user._id,
+            section: section
+          });
+        } else {
+          logger.error('Failed to edit help message', editError, {
+            userId: ctx.user._id,
+            section: section,
+            errorCode: editError.code,
+            errorDescription: editError.description
+          });
+          
+          // Try to send new message as fallback
+          try {
+            await ctx.reply(newMessageText, { 
+              reply_markup: newKeyboard,
+              parse_mode: 'Markdown'
+            });
+          } catch (replyError) {
+            logger.error('Failed to send fallback help message', replyError, {
+              userId: ctx.user._id,
+              section: section
+            });
+          }
+        }
+      }
+    }
+    
+    // Always answer callback query
+    try {
       await ctx.answerCbQuery();
+    } catch (answerError) {
+      logger.error('Failed to answer callback query', answerError, {
+        userId: ctx.user._id,
+        section: section
+      });
+    }
+    
+    logger.userAction(ctx.user._id, 'help_callback', { section });
+    
+  } catch (error) {
+    logger.error('Error in help callback handler', error, {
+      userId: ctx.user?._id,
+      section: section,
+      errorMessage: error?.message,
+      errorStack: error?.stack
+    });
+    
+    // Ensure we always try to answer the callback query
+    try {
+      if (ctx && ctx.answerCbQuery) {
+        const errorMessage = ctx.t ? ctx.t('errors.general') : 'حدث خطأ، يرجى المحاولة مرة أخرى';
+        await ctx.answerCbQuery(errorMessage);
+      }
+    } catch (answerError) {
+      logger.error('Failed to answer callback query in error handler', answerError);
+    }
+  }
+}
+
+// Generate help text based on section
+function generateHelpText(section, user, t) {
+  try {
+    if (!section || !user || !t) {
+      return null;
+    }
+
+    switch (section) {
+      case 'remind':
+        return getRemindHelp(t);
+      case 'list':
+        return getListHelp(t);
+      case 'settings':
+        return getSettingsHelp(t);
+      case 'language':
+        return getLanguageHelp(t);
+      case 'admin':
+        return user.isAdmin ? getAdminHelp(t) : null;
+      case 'users':
+        return user.isAdmin ? getUsersHelp(t) : null;
+      default:
+        return getGeneralHelp(t, user.isAdmin);
     }
   } catch (error) {
-    logger.error('Error in help callback', { error });
-    await ctx.answerCbQuery('حدث خطأ، يرجى المحاولة مرة أخرى');
+    logger.error('Error generating help text', error, {
+      section: section,
+      userId: user?._id
+    });
+    return null;
   }
-};
+}
+
+// Generate help keyboard based on section
+function generateHelpKeyboard(section, language) {
+  try {
+    const { createHelpKeyboard } = require('../../utils/keyboards');
+    // Use the existing createHelpKeyboard function as fallback
+    return createHelpKeyboard(language, false);
+  } catch (error) {
+    logger.error('Error generating help keyboard', error, {
+      section: section,
+      language: language
+    });
+    return null;
+  }
+}
+
+// Generate general help text
+function getGeneralHelp(t, isAdmin) {
+  let help = `📚 **${t('help.title')}**\n\n`;
+  help += `${t('help.description')}\n\n`;
+  help += `**${t('help.available_sections')}:**\n`;
+  help += `━━━━━━━━━━━━━━━━━━━━\n`;
+  help += `📝 ${t('help.remind')}\n`;
+  help += `📋 ${t('help.list')}\n`;
+  help += `⚙️ ${t('help.settings')}\n`;
+  help += `🌐 ${t('help.language')}\n`;
+  
+  if (isAdmin) {
+    help += `\n**${t('help.admin_sections')}:**\n`;
+    help += `━━━━━━━━━━━━━━━━━━━━\n`;
+    help += `👑 ${t('help.admin')}\n`;
+    help += `👥 ${t('help.users')}\n`;
+  }
+  
+  return help;
+}
 
 function getRemindHelp(t) {
   let help = `📝 **${t('help.remind')}**\n\n`;
