@@ -184,6 +184,18 @@ userSchema.methods.getLocalTime = function (utcTime = new Date()) {
   return moment.tz(utcTime, this.timezone);
 };
 
+userSchema.methods.incrementCreatedReminders = function () {
+  this.stats.totalReminders += 1;
+  this.lastActive = new Date();
+  return this.save();
+};
+
+userSchema.methods.incrementCompletedReminders = function () {
+  this.stats.completedReminders += 1;
+  this.lastActive = new Date();
+  return this.save();
+};
+
 userSchema.methods.toSafeObject = function () {
   const userObject = this.toObject();
   delete userObject.__v;
