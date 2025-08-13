@@ -410,6 +410,160 @@ function createCancelKeyboard(lang = 'ar', action = 'cancel') {
   ]);
 }
 
+/**
+ * Create search results keyboard
+ * @param {Array} reminders - Array of reminder objects
+ * @param {number} currentPage - Current page number
+ * @param {number} totalPages - Total number of pages
+ * @param {string} lang - User language
+ * @returns {object} Inline keyboard markup
+ */
+function createSearchResultsKeyboard(reminders, currentPage, totalPages, lang = 'ar') {
+  const t = (key, options) => translate(lang, key, options);
+  
+  const buttons = reminders.map((reminder) => [
+    Markup.button.callback(
+      `✏️ ${reminder.title.substring(0, 20)}...`,
+      `edit_${reminder._id}`
+    ),
+    Markup.button.callback('❌', `delete_${reminder._id}`)
+  ]);
+  
+  const navigation = [];
+  if (currentPage > 1) {
+    navigation.push(Markup.button.callback('⬅️ Previous', `search_page_${currentPage - 1}`));
+  }
+  if (currentPage < totalPages) {
+    navigation.push(Markup.button.callback('Next ➡️', `search_page_${currentPage + 1}`));
+  }
+  
+  if (navigation.length > 0) buttons.push(navigation);
+  
+  return Markup.inlineKeyboard(buttons);
+}
+
+/**
+ * Create categories keyboard
+ * @param {string} lang - User language
+ * @param {boolean} hasCategories - Whether user has categories
+ * @returns {object} Inline keyboard markup
+ */
+function createCategoriesKeyboard(lang = 'ar', hasCategories = false) {
+  const t = (key, options) => translate(lang, key, options);
+  
+  const buttons = [];
+  
+  if (hasCategories) {
+    buttons.push([
+      Markup.button.callback('➕ Create New', 'category_create'),
+      Markup.button.callback('📋 View All', 'category_list')
+    ]);
+  } else {
+    buttons.push([
+      Markup.button.callback('➕ Create First Category', 'category_create')
+    ]);
+  }
+  
+  buttons.push([Markup.button.callback('🔙 Back to Main', 'back_main')]);
+  
+  return Markup.inlineKeyboard(buttons);
+}
+
+/**
+ * Create category actions keyboard
+ * @param {string} lang - User language
+ * @param {string} categoryName - Category name
+ * @returns {object} Inline keyboard markup
+ */
+function createCategoryActionsKeyboard(lang = 'ar', categoryName = '') {
+  const t = (key, options) => translate(lang, key, options);
+  
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('👁️ View', `category_view_${categoryName}`),
+      Markup.button.callback('✏️ Edit', `category_edit_${categoryName}`)
+    ],
+    [
+      Markup.button.callback('🗑️ Delete', `category_delete_${categoryName}`),
+      Markup.button.callback('🔙 Back', 'category_back')
+    ]
+  ]);
+}
+
+/**
+ * Create tags keyboard
+ * @param {string} lang - User language
+ * @param {boolean} hasTags - Whether user has tags
+ * @returns {object} Inline keyboard markup
+ */
+function createTagsKeyboard(lang = 'ar', hasTags = false) {
+  const t = (key, options) => translate(lang, key, options);
+  
+  const buttons = [];
+  
+  if (hasTags) {
+    buttons.push([
+      Markup.button.callback('➕ Create New', 'tag_create'),
+      Markup.button.callback('📋 View All', 'tag_list')
+    ]);
+  } else {
+    buttons.push([
+      Markup.button.callback('➕ Create First Tag', 'tag_create')
+    ]);
+  }
+  
+  buttons.push([Markup.button.callback('🔙 Back to Main', 'back_main')]);
+  
+  return Markup.inlineKeyboard(buttons);
+}
+
+/**
+ * Create tag actions keyboard
+ * @param {string} lang - User language
+ * @param {string} tagName - Tag name
+ * @returns {object} Inline keyboard markup
+ */
+function createTagActionsKeyboard(lang = 'ar', tagName = '') {
+  const t = (key, options) => translate(lang, key, options);
+  
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('👁️ View', `tag_view_${tagName}`),
+      Markup.button.callback('✏️ Edit', `tag_edit_${tagName}`)
+    ],
+    [
+      Markup.button.callback('🗑️ Delete', `tag_delete_${tagName}`),
+      Markup.button.callback('🔙 Back', 'tag_back')
+    ]
+  ]);
+}
+
+/**
+ * Create snooze options keyboard
+ * @param {string} lang - User language
+ * @returns {object} Inline keyboard markup
+ */
+function createSnoozeOptionsKeyboard(lang = 'ar') {
+  const t = (key, options) => translate(lang, key, options);
+  
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('5 min', 'snooze_5min'),
+      Markup.button.callback('15 min', 'snooze_15min'),
+      Markup.button.callback('30 min', 'snooze_30min')
+    ],
+    [
+      Markup.button.callback('1 hour', 'snooze_1hour'),
+      Markup.button.callback('2 hours', 'snooze_2hours'),
+      Markup.button.callback('4 hours', 'snooze_4hours')
+    ],
+    [
+      Markup.button.callback('1 day', 'snooze_1day'),
+      Markup.button.callback('🔙 Cancel', 'snooze_cancel')
+    ]
+  ]);
+}
+
 module.exports = {
   createLanguageKeyboard,
   createTimezoneKeyboard,
@@ -424,6 +578,12 @@ module.exports = {
   createHelpKeyboard,
   createBackKeyboard,
   createCancelKeyboard,
+  createSearchResultsKeyboard,
+  createCategoriesKeyboard,
+  createCategoryActionsKeyboard,
+  createTagsKeyboard,
+  createTagActionsKeyboard,
+  createSnoozeOptionsKeyboard,
   formatReminderMessage,
   formatUserInfo
 };

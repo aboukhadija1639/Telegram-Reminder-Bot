@@ -26,6 +26,13 @@ const settingsHandler = require('./bot/handlers/commands/settings');
 const languageHandler = require('./bot/handlers/commands/language');
 const timezoneHandler = require('./bot/handlers/commands/timezone');
 
+// Import new feature handlers
+const searchHandler = require('./bot/handlers/commands/search');
+const categoriesHandler = require('./bot/handlers/commands/categories');
+const tagsHandler = require('./bot/handlers/commands/tags');
+const snoozeHandler = require('./bot/handlers/commands/snooze');
+const completeHandler = require('./bot/handlers/commands/complete');
+
 // Import admin handlers
 const statsHandler = require('./bot/handlers/commands/stats');
 const broadcastHandler = require('./bot/handlers/commands/broadcast');
@@ -144,6 +151,13 @@ class TelegramReminderBot {
     this.bot.command('language', languageHandler);
     this.bot.command('timezone', timezoneHandler);
     
+    // New feature commands
+    this.bot.command('search', searchHandler);
+    this.bot.command('categories', categoriesHandler);
+    this.bot.command('tags', tagsHandler);
+    this.bot.command('snooze', snoozeHandler);
+    this.bot.command('complete', completeHandler);
+    
     // Admin commands (with admin middleware)
     this.bot.command('stats', adminMiddleware, statsHandler);
     this.bot.command('broadcast', adminMiddleware, broadcastHandler);
@@ -173,18 +187,36 @@ class TelegramReminderBot {
           const editHandled = await handleEditInput(ctx);
           
           if (!editHandled) {
-            // Try broadcast input (admin only)
-            if (ctx.user?.isAdmin) {
-              const { handleBroadcastInput } = require('./bot/handlers/commands/broadcast');
-              const broadcastHandled = await handleBroadcastInput(ctx);
+            // Try search input
+            const { handleSearchInput } = require('./bot/handlers/commands/search');
+            const searchHandled = await handleSearchInput(ctx);
+            
+            if (!searchHandled) {
+              // Try categories input
+              const { handleCategoriesInput } = require('./bot/handlers/commands/categories');
+              const categoriesHandled = await handleCategoriesInput(ctx);
               
-              // If no handler processed the input but user is in a session, show error
-              if (!broadcastHandled && (ctx.session.reminderData || ctx.session.editData || ctx.session.broadcastData)) {
-                await ctx.reply(ctx.t('reminder.unexpected_input'));
+              if (!categoriesHandled) {
+                // Try tags input
+                const { handleTagsInput } = require('./bot/handlers/commands/tags');
+                const tagsHandled = await handleTagsInput(ctx);
+                
+                if (!tagsHandled) {
+                  // Try broadcast input (admin only)
+                  if (ctx.user?.isAdmin) {
+                    const { handleBroadcastInput } = require('./bot/handlers/commands/broadcast');
+                    const broadcastHandled = await handleBroadcastInput(ctx);
+                    
+                    // If no handler processed the input but user is in a session, show error
+                    if (!broadcastHandled && (ctx.session.reminderData || ctx.session.editData || ctx.session.broadcastData || ctx.session.searchData || ctx.session.categoriesData || ctx.session.tagsData)) {
+                      await ctx.reply(ctx.t('reminder.unexpected_input'));
+                    }
+                  } else if (ctx.session.reminderData || ctx.session.editData || ctx.session.searchData || ctx.session.categoriesData || ctx.session.tagsData) {
+                    // User is in a session but not admin
+                    await ctx.reply(ctx.t('reminder.unexpected_input'));
+                  }
+                }
               }
-            } else if (ctx.session.reminderData || ctx.session.editData) {
-              // User is in a session but not admin
-              await ctx.reply(ctx.t('reminder.unexpected_input'));
             }
           }
         }
